@@ -1,14 +1,13 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any
+from datetime import datetime, timezone
+import os
+import base64
 import hashlib
 import hmac
-import base64
 import json
-import os
 
 
 # ============================================================
@@ -32,8 +31,9 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1:5173",
 
-        # Your Vercel website will be added here later
-        "https://YOUR-VERCEL-APP.vercel.app",
+        # Add your Vercel frontend URL here after deployment.
+        # Example:
+        # "https://ems-bonus-calculator.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -42,129 +42,38 @@ app.add_middleware(
 
 
 # ============================================================
-# SECURITY
+# BASIC CONFIGURATION
 # ============================================================
 
-security = HTTPBearer()
-
-SECRET_KEY = os.getenv(
-    "EMS_BONUS_SECRET",
-    "change-this-secret-key-for-production"
+TOKEN_SECRET = os.getenv(
+    "TOKEN_SECRET",
+    "ems-bonus-calculator-change-this-secret"
 )
 
 
 # ============================================================
-# SIMPLE LOGIN DATABASE
+# USERS
 # ============================================================
-#
-# You can change these accounts later.
-#
-# Username: admin
-# Password: admin123
-#
-# Username: hr
-# Password: hr123
-#
-# Username: manager
-# Password: manager123
-#
-# ============================================================
+# Temporary login system.
+# These can later be moved to a database.
 
 USERS = {
     "admin": {
         "password": "admin123",
+        "name": "EMS Admin",
         "role": "Admin",
-        "name": "EMS Administrator",
     },
     "hr": {
         "password": "hr123",
-        "role": "HR",
         "name": "Human Resources",
+        "role": "HR",
     },
     "manager": {
         "password": "manager123",
-        "role": "Manager",
         "name": "EMS Manager",
+        "role": "Manager",
     },
 }
-
-
-# ============================================================
-# PASSWORD / TOKEN HELPERS
-# ============================================================
-
-def create_token(username: str) -> str:
-    """
-    Creates a simple signed token.
-
-    This is intentionally lightweight for the project.
-    For a production deployment, use a proper JWT library.
-    """
-
-    payload = {
-        "username": username,
-        "exp": int(
-            (datetime.utcnow() + timedelta(hours=12)).timestamp()
-        ),
-    }
-
-    payload_string = base64.urlsafe_b64encode(
-        json.dumps(payload).encode()
-    ).decode()
-
-    signature = hmac.new(
-        SECRET_KEY.encode(),
-        payload_string.encode(),
-        hashlib.sha256,
-    ).hexdigest()
-
-    return f"{payload_string}.{signature}"
-
-
-def verify_token(token: str) -> Dict[str, Any]:
-    try:
-        parts = token.split(".")
-
-        if len(parts) != 2:
-            raise ValueError("Invalid token")
-
-        payload_string = parts[0]
-        received_signature = parts[1]
-
-        expected_signature = hmac.new(
-            SECRET_KEY.encode(),
-            payload_string.encode(),
-            hashlib.sha256,
-        ).hexdigest()
-
-        if not hmac.compare_digest(
-            received_signature,
-            expected_signature,
-        ):
-            raise ValueError("Invalid signature")
-
-        payload = json.loads(
-            base64.urlsafe_b64decode(
-                payload_string.encode()
-            ).decode()
-        )
-
-        if payload["exp"] < int(datetime.utcnow().timestamp()):
-            raise ValueError("Token expired")
-
-        return payload
-
-    except Exception:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired login session.",
-        )
-
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-):
-    return verify_token(credentials.credentials)
 
 
 # ============================================================
@@ -177,67 +86,98 @@ BONUS_RATES = {
     # LABTECH
     # --------------------------------------------------------
 
-    "captcha": 10000,
+    "labtech": {
+        "captcha": 10000,
 
-    "delivery_bonus": 5000,
+        # $5,000 bonus + $5,000 normal delivery payment
+        "delivery_bonus": 5000,
+        "delivery_payment": 5000,
 
-    # Delivery also receives:
-    # $5,000 per delivery + $5,000 delivery bonus
-    "delivery_paycheck": 5000,
-
+        "day_1_training": 55000,
+        "day_2_training": 50000,
+        "labtech_training": 30000,
+        "refresher_training": 30000,
+    },
 
     # --------------------------------------------------------
     # FTO
     # --------------------------------------------------------
 
-    "day_1_training": 55000,
-
-    "day_2_training": 50000,
-
-    "labtech_training": 30000,
-
-    "refresher_training": 30000,
-
+    "fto": {
+        "day_1_training": 55000,
+        "day_2_training": 50000,
+        "labtech_training": 30000,
+        "refresher_training": 30000,
+    },
 
     # --------------------------------------------------------
     # RESCUE OFFICER
     # --------------------------------------------------------
 
-    "unscripted_event": 15000,
-
-    "scripted_event": 25000,
-
+    "rescue": {
+        "unscripted_event": 15000,
+        "scripted_event": 25000,
+    },
 
     # --------------------------------------------------------
     # HIGH COMMAND
     # --------------------------------------------------------
 
-    "high_command_hour": 10000,
-
+    "high_command": {
+        "lobby_hour": 10000,
+    },
 
     # --------------------------------------------------------
-    # MEDICAL / AMBULANCE
+    # MEDICAL DEPARTMENT
     # --------------------------------------------------------
 
-    "day_ph1": 10000,
-    "day_ph2": 10000,
+    "medical": {
+        "day_ph1": 10000,
+        "day_ph2": 10000,
 
-    "late_ph1": 20000,
-    "late_ph2": 20000,
+        "night_ph1": 20000,
+        "night_ph2": 20000,
 
-    "night_ph1": 20000,
-    "night_ph2": 20000,
+        "late_ph1": 20000,
+        "late_ph2": 20000,
 
-    "day_on_calls": 10000,
-    "late_on_calls": 20000,
-    "night_on_calls": 20000,
+        "day_on_call": 10000,
+        "night_on_call": 20000,
+        "late_on_call": 20000,
 
-    "standby": 10000,
+        "standby": 10000,
+    },
 
-    "ambulance_day": 10000,
-    "ambulance_late": 20000,
-    "ambulance_night": 20000,
+    # --------------------------------------------------------
+    # AMBULANCE
+    # --------------------------------------------------------
+
+    "ambulance": {
+        "day_lobby": 10000,
+        "night_lobby": 20000,
+        "late_lobby": 20000,
+
+        "day_on_call": 10000,
+        "night_on_call": 20000,
+        "late_on_call": 20000,
+
+        "standby": 10000,
+    },
 }
+
+
+# ============================================================
+# DEPARTMENTS
+# ============================================================
+
+DEPARTMENTS = [
+    "Human Resources",
+    "Medical Department",
+    "Ambulance",
+    "Labtech",
+    "Rescue Officer",
+    "High Command",
+]
 
 
 # ============================================================
@@ -249,42 +189,51 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class Person(BaseModel):
-    name: str
-    employee_id: str
-    department: str
-
-
 class LobbyLog(BaseModel):
     lobby: str
-    on_duty: str
-    off_duty: str
+    start_time: str
+    end_time: str
     date: Optional[str] = None
 
 
 class ActivityCounts(BaseModel):
-    captcha: int = 0
-    deliveries: int = 0
+    captcha: int = Field(default=0, ge=0)
+    deliveries: int = Field(default=0, ge=0)
 
-    day_1_training: int = 0
-    day_2_training: int = 0
-    labtech_training: int = 0
-    refresher_training: int = 0
+    day_1_training: int = Field(default=0, ge=0)
+    day_2_training: int = Field(default=0, ge=0)
+    labtech_training: int = Field(default=0, ge=0)
+    refresher_training: int = Field(default=0, ge=0)
 
-    unscripted_events: int = 0
-    scripted_events: int = 0
+    unscripted_events: int = Field(default=0, ge=0)
+    scripted_events: int = Field(default=0, ge=0)
+
+    day_ph1_hours: int = Field(default=0, ge=0)
+    day_ph2_hours: int = Field(default=0, ge=0)
+
+    night_ph1_hours: int = Field(default=0, ge=0)
+    night_ph2_hours: int = Field(default=0, ge=0)
+
+    late_ph1_hours: int = Field(default=0, ge=0)
+    late_ph2_hours: int = Field(default=0, ge=0)
+
+    day_on_call_hours: int = Field(default=0, ge=0)
+    night_on_call_hours: int = Field(default=0, ge=0)
+    late_on_call_hours: int = Field(default=0, ge=0)
+
+    day_lobby_hours: int = Field(default=0, ge=0)
+    night_lobby_hours: int = Field(default=0, ge=0)
+    late_lobby_hours: int = Field(default=0, ge=0)
+
+    standby_hours: int = Field(default=0, ge=0)
 
 
 class EmployeeBonusRequest(BaseModel):
     name: str
     employee_id: str
     department: str
-
-    lobbies: List[LobbyLog] = Field(default_factory=list)
-
-    activities: ActivityCounts = Field(
-        default_factory=ActivityCounts
-    )
+    activities: ActivityCounts = ActivityCounts()
+    lobby_logs: List[LobbyLog] = []
 
 
 class BonusCalculationRequest(BaseModel):
@@ -292,7 +241,685 @@ class BonusCalculationRequest(BaseModel):
 
 
 # ============================================================
-# BASIC ROUTES
+# TOKEN FUNCTIONS
+# ============================================================
+
+def create_token(username: str) -> str:
+    """
+    Creates a simple signed token using HMAC.
+    This is suitable for this calculator's current login system.
+    """
+
+    payload = {
+        "username": username,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    payload_json = json.dumps(
+        payload,
+        separators=(",", ":")
+    ).encode()
+
+    encoded_payload = base64.urlsafe_b64encode(
+        payload_json
+    ).decode()
+
+    signature = hmac.new(
+        TOKEN_SECRET.encode(),
+        encoded_payload.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+    return f"{encoded_payload}.{signature}"
+
+
+def verify_token(token: str) -> Optional[Dict[str, Any]]:
+    try:
+        if not token or "." not in token:
+            return None
+
+        encoded_payload, signature = token.split(".", 1)
+
+        expected_signature = hmac.new(
+            TOKEN_SECRET.encode(),
+            encoded_payload.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+
+        if not hmac.compare_digest(
+            signature,
+            expected_signature
+        ):
+            return None
+
+        payload_json = base64.urlsafe_b64decode(
+            encoded_payload.encode()
+        )
+
+        return json.loads(payload_json)
+
+    except Exception:
+        return None
+
+
+def get_current_user(
+    authorization: Optional[str]
+):
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Authorization header required."
+        )
+
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authorization format."
+        )
+
+    token = authorization.replace(
+        "Bearer ",
+        "",
+        1
+    ).strip()
+
+    payload = verify_token(token)
+
+    if not payload:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token."
+        )
+
+    username = payload.get("username")
+
+    if username not in USERS:
+        raise HTTPException(
+            status_code=401,
+            detail="User not found."
+        )
+
+    return {
+        "username": username,
+        **USERS[username],
+    }
+
+
+# ============================================================
+# UTILITY FUNCTIONS
+# ============================================================
+
+def money(amount: int) -> str:
+    return f"${amount:,.0f}"
+
+
+def completed_hours_from_minutes(minutes: int) -> int:
+    """
+    Only completed hours are paid.
+    Example:
+    59 minutes = 0 hours
+    60 minutes = 1 hour
+    119 minutes = 1 hour
+    120 minutes = 2 hours
+    """
+
+    if minutes <= 0:
+        return 0
+
+    return minutes // 60
+
+
+def parse_time_to_minutes(value: str) -> int:
+    """
+    Converts HH:MM into minutes from midnight.
+    """
+
+    value = value.strip()
+
+    dt = datetime.strptime(
+        value,
+        "%H:%M"
+    )
+
+    return dt.hour * 60 + dt.minute
+
+
+def calculate_lobby_hours(
+    start_time: str,
+    end_time: str
+) -> int:
+
+    try:
+        start = parse_time_to_minutes(start_time)
+        end = parse_time_to_minutes(end_time)
+
+        # Overnight shift
+        if end < start:
+            end += 24 * 60
+
+        duration = end - start
+
+        return completed_hours_from_minutes(
+            duration
+        )
+
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid time format: "
+                f"{start_time} - {end_time}. "
+                f"Use HH:MM."
+            )
+        )
+
+
+def calculate_lobby_log_bonus(
+    lobby: LobbyLog
+) -> Dict[str, Any]:
+
+    hours = calculate_lobby_hours(
+        lobby.start_time,
+        lobby.end_time
+    )
+
+    lobby_name = lobby.lobby.lower().strip()
+
+    rate = 0
+
+    if "day ph1" in lobby_name:
+        rate = BONUS_RATES["medical"]["day_ph1"]
+
+    elif "day ph2" in lobby_name:
+        rate = BONUS_RATES["medical"]["day_ph2"]
+
+    elif "night ph1" in lobby_name:
+        rate = BONUS_RATES["medical"]["night_ph1"]
+
+    elif "night ph2" in lobby_name:
+        rate = BONUS_RATES["medical"]["night_ph2"]
+
+    elif "late ph1" in lobby_name:
+        rate = BONUS_RATES["medical"]["late_ph1"]
+
+    elif "late ph2" in lobby_name:
+        rate = BONUS_RATES["medical"]["late_ph2"]
+
+    elif "day on call" in lobby_name:
+        rate = BONUS_RATES["medical"]["day_on_call"]
+
+    elif "night on call" in lobby_name:
+        rate = BONUS_RATES["medical"]["night_on_call"]
+
+    elif "late on call" in lobby_name:
+        rate = BONUS_RATES["medical"]["late_on_call"]
+
+    elif "day lobby" in lobby_name:
+        rate = BONUS_RATES["ambulance"]["day_lobby"]
+
+    elif "night lobby" in lobby_name:
+        rate = BONUS_RATES["ambulance"]["night_lobby"]
+
+    elif "late lobby" in lobby_name:
+        rate = BONUS_RATES["ambulance"]["late_lobby"]
+
+    elif "standby" in lobby_name:
+        rate = BONUS_RATES["high_command"]["lobby_hour"]
+
+    else:
+        rate = BONUS_RATES["medical"]["day_ph1"]
+
+    bonus = hours * rate
+
+    return {
+        "lobby": lobby.lobby,
+        "start_time": lobby.start_time,
+        "end_time": lobby.end_time,
+        "date": lobby.date,
+        "completed_hours": hours,
+        "rate_per_hour": rate,
+        "bonus": bonus,
+    }
+
+
+# ============================================================
+# CALCULATE EMPLOYEE BONUS
+# ============================================================
+
+def calculate_employee(
+    employee: EmployeeBonusRequest
+) -> Dict[str, Any]:
+
+    activities = employee.activities
+
+    department = employee.department.lower().strip()
+
+    breakdown = []
+    total = 0
+
+    # --------------------------------------------------------
+    # LABTECH
+    # --------------------------------------------------------
+
+    if department == "labtech":
+
+        if activities.captcha:
+            amount = (
+                activities.captcha
+                * BONUS_RATES["labtech"]["captcha"]
+            )
+
+            breakdown.append({
+                "activity": "Captcha",
+                "count": activities.captcha,
+                "rate": BONUS_RATES["labtech"]["captcha"],
+                "amount": amount,
+            })
+
+            total += amount
+
+        if activities.deliveries:
+            bonus_amount = (
+                activities.deliveries
+                * BONUS_RATES["labtech"]["delivery_bonus"]
+            )
+
+            breakdown.append({
+                "activity": "Delivery Bonus",
+                "count": activities.deliveries,
+                "rate": BONUS_RATES["labtech"]["delivery_bonus"],
+                "amount": bonus_amount,
+            })
+
+            total += bonus_amount
+
+        if activities.day_1_training:
+            amount = (
+                activities.day_1_training
+                * BONUS_RATES["labtech"]["day_1_training"]
+            )
+
+            breakdown.append({
+                "activity": "Day 1 Training",
+                "count": activities.day_1_training,
+                "rate": BONUS_RATES["labtech"]["day_1_training"],
+                "amount": amount,
+            })
+
+            total += amount
+
+        if activities.day_2_training:
+            amount = (
+                activities.day_2_training
+                * BONUS_RATES["labtech"]["day_2_training"]
+            )
+
+            breakdown.append({
+                "activity": "Day 2 Training",
+                "count": activities.day_2_training,
+                "rate": BONUS_RATES["labtech"]["day_2_training"],
+                "amount": amount,
+            })
+
+            total += amount
+
+        if activities.labtech_training:
+            amount = (
+                activities.labtech_training
+                * BONUS_RATES["labtech"]["labtech_training"]
+            )
+
+            breakdown.append({
+                "activity": "Labtech Training",
+                "count": activities.labtech_training,
+                "rate": BONUS_RATES["labtech"]["labtech_training"],
+                "amount": amount,
+            })
+
+            total += amount
+
+        if activities.refresher_training:
+            amount = (
+                activities.refresher_training
+                * BONUS_RATES["labtech"]["refresher_training"]
+            )
+
+            breakdown.append({
+                "activity": "Refresher Training",
+                "count": activities.refresher_training,
+                "rate": BONUS_RATES["labtech"]["refresher_training"],
+                "amount": amount,
+            })
+
+            total += amount
+
+    # --------------------------------------------------------
+    # FTO
+    # --------------------------------------------------------
+
+    elif department in ["fto", "human resources", "hr"]:
+
+        if activities.day_1_training:
+            amount = (
+                activities.day_1_training
+                * BONUS_RATES["fto"]["day_1_training"]
+            )
+
+            breakdown.append({
+                "activity": "Day 1 Training",
+                "count": activities.day_1_training,
+                "rate": BONUS_RATES["fto"]["day_1_training"],
+                "amount": amount,
+            })
+
+            total += amount
+
+        if activities.day_2_training:
+            amount = (
+                activities.day_2_training
+                * BONUS_RATES["fto"]["day_2_training"]
+            )
+
+            breakdown.append({
+                "activity": "Day 2 Training",
+                "count": activities.day_2_training,
+                "rate": BONUS_RATES["fto"]["day_2_training"],
+                "amount": amount,
+            })
+
+            total += amount
+
+        if activities.labtech_training:
+            amount = (
+                activities.labtech_training
+                * BONUS_RATES["fto"]["labtech_training"]
+            )
+
+            breakdown.append({
+                "activity": "Labtech Training",
+                "count": activities.labtech_training,
+                "rate": BONUS_RATES["fto"]["labtech_training"],
+                "amount": amount,
+            })
+
+            total += amount
+
+        if activities.refresher_training:
+            amount = (
+                activities.refresher_training
+                * BONUS_RATES["fto"]["refresher_training"]
+            )
+
+            breakdown.append({
+                "activity": "Refresher Training",
+                "count": activities.refresher_training,
+                "rate": BONUS_RATES["fto"]["refresher_training"],
+                "amount": amount,
+            })
+
+            total += amount
+
+    # --------------------------------------------------------
+    # RESCUE OFFICER
+    # --------------------------------------------------------
+
+    elif department in [
+        "rescue",
+        "rescue officer",
+    ]:
+
+        if activities.unscripted_events:
+            amount = (
+                activities.unscripted_events
+                * BONUS_RATES["rescue"]["unscripted_event"]
+            )
+
+            breakdown.append({
+                "activity": "Unscripted Event",
+                "count": activities.unscripted_events,
+                "rate": BONUS_RATES["rescue"]["unscripted_event"],
+                "amount": amount,
+            })
+
+            total += amount
+
+        if activities.scripted_events:
+            amount = (
+                activities.scripted_events
+                * BONUS_RATES["rescue"]["scripted_event"]
+            )
+
+            breakdown.append({
+                "activity": "Scripted Event",
+                "count": activities.scripted_events,
+                "rate": BONUS_RATES["rescue"]["scripted_event"],
+                "amount": amount,
+            })
+
+            total += amount
+
+    # --------------------------------------------------------
+    # MEDICAL DEPARTMENT
+    # --------------------------------------------------------
+
+    elif department in [
+        "medical",
+        "medical department",
+    ]:
+
+        hourly_items = [
+            (
+                "Day PH1",
+                activities.day_ph1_hours,
+                BONUS_RATES["medical"]["day_ph1"],
+            ),
+            (
+                "Day PH2",
+                activities.day_ph2_hours,
+                BONUS_RATES["medical"]["day_ph2"],
+            ),
+            (
+                "Night PH1",
+                activities.night_ph1_hours,
+                BONUS_RATES["medical"]["night_ph1"],
+            ),
+            (
+                "Night PH2",
+                activities.night_ph2_hours,
+                BONUS_RATES["medical"]["night_ph2"],
+            ),
+            (
+                "Late PH1",
+                activities.late_ph1_hours,
+                BONUS_RATES["medical"]["late_ph1"],
+            ),
+            (
+                "Late PH2",
+                activities.late_ph2_hours,
+                BONUS_RATES["medical"]["late_ph2"],
+            ),
+            (
+                "Day On Calls",
+                activities.day_on_call_hours,
+                BONUS_RATES["medical"]["day_on_call"],
+            ),
+            (
+                "Night On Calls",
+                activities.night_on_call_hours,
+                BONUS_RATES["medical"]["night_on_call"],
+            ),
+            (
+                "Late On Calls",
+                activities.late_on_call_hours,
+                BONUS_RATES["medical"]["late_on_call"],
+            ),
+            (
+                "Standby",
+                activities.standby_hours,
+                BONUS_RATES["medical"]["standby"],
+            ),
+        ]
+
+        for name, hours, rate in hourly_items:
+
+            if hours > 0:
+
+                amount = hours * rate
+
+                breakdown.append({
+                    "activity": name,
+                    "hours": hours,
+                    "rate": rate,
+                    "amount": amount,
+                })
+
+                total += amount
+
+    # --------------------------------------------------------
+    # AMBULANCE
+    # --------------------------------------------------------
+
+    elif department == "ambulance":
+
+        hourly_items = [
+            (
+                "Day Lobby",
+                activities.day_lobby_hours,
+                BONUS_RATES["ambulance"]["day_lobby"],
+            ),
+            (
+                "Night Lobby",
+                activities.night_lobby_hours,
+                BONUS_RATES["ambulance"]["night_lobby"],
+            ),
+            (
+                "Late Lobby",
+                activities.late_lobby_hours,
+                BONUS_RATES["ambulance"]["late_lobby"],
+            ),
+            (
+                "Day On Calls",
+                activities.day_on_call_hours,
+                BONUS_RATES["ambulance"]["day_on_call"],
+            ),
+            (
+                "Night On Calls",
+                activities.night_on_call_hours,
+                BONUS_RATES["ambulance"]["night_on_call"],
+            ),
+            (
+                "Late On Calls",
+                activities.late_on_call_hours,
+                BONUS_RATES["ambulance"]["late_on_call"],
+            ),
+            (
+                "Standby",
+                activities.standby_hours,
+                BONUS_RATES["ambulance"]["standby"],
+            ),
+        ]
+
+        for name, hours, rate in hourly_items:
+
+            if hours > 0:
+
+                amount = hours * rate
+
+                breakdown.append({
+                    "activity": name,
+                    "hours": hours,
+                    "rate": rate,
+                    "amount": amount,
+                })
+
+                total += amount
+
+    # --------------------------------------------------------
+    # HIGH COMMAND
+    # --------------------------------------------------------
+
+    elif department in [
+        "high command",
+        "high_command",
+    ]:
+
+        hours = activities.standby_hours
+
+        if hours > 0:
+
+            amount = (
+                hours
+                * BONUS_RATES["high_command"]["lobby_hour"]
+            )
+
+            breakdown.append({
+                "activity": "Lobby / Standby",
+                "hours": hours,
+                "rate": BONUS_RATES["high_command"]["lobby_hour"],
+                "amount": amount,
+            })
+
+            total += amount
+
+        if activities.unscripted_events:
+            amount = (
+                activities.unscripted_events
+                * BONUS_RATES["rescue"]["unscripted_event"]
+            )
+
+            breakdown.append({
+                "activity": "Unscripted Event",
+                "count": activities.unscripted_events,
+                "rate": BONUS_RATES["rescue"]["unscripted_event"],
+                "amount": amount,
+            })
+
+            total += amount
+
+        if activities.scripted_events:
+            amount = (
+                activities.scripted_events
+                * BONUS_RATES["rescue"]["scripted_event"]
+            )
+
+            breakdown.append({
+                "activity": "Scripted Event",
+                "count": activities.scripted_events,
+                "rate": BONUS_RATES["rescue"]["scripted_event"],
+                "amount": amount,
+            })
+
+            total += amount
+
+    # --------------------------------------------------------
+    # LOBBY LOGS
+    # --------------------------------------------------------
+
+    lobby_results = []
+
+    for lobby in employee.lobby_logs:
+
+        result = calculate_lobby_log_bonus(
+            lobby
+        )
+
+        lobby_results.append(result)
+
+        total += result["bonus"]
+
+    return {
+        "name": employee.name,
+        "employee_id": employee.employee_id,
+        "department": employee.department,
+        "breakdown": breakdown,
+        "lobby_logs": lobby_results,
+        "total": total,
+        "formatted_total": money(total),
+    }
+
+
+# ============================================================
+# ROOT / HEALTH CHECK
 # ============================================================
 
 @app.get("/")
@@ -300,13 +927,14 @@ def root():
     return {
         "message": "EMS Bonus Calculator API is running.",
         "version": "1.0.0",
+        "status": "online",
     }
 
 
-@app.get("/health")
-def health():
+@app.get("/healthz")
+def health_check():
     return {
-        "status": "online"
+        "status": "healthy"
     }
 
 
@@ -324,16 +952,13 @@ def login(data: LoginRequest):
     if not user:
         raise HTTPException(
             status_code=401,
-            detail="Invalid username or password.",
+            detail="Invalid username or password."
         )
 
-    if not hmac.compare_digest(
-        data.password,
-        user["password"],
-    ):
+    if data.password != user["password"]:
         raise HTTPException(
             status_code=401,
-            detail="Invalid username or password.",
+            detail="Invalid username or password."
         )
 
     token = create_token(username)
@@ -354,722 +979,148 @@ def login(data: LoginRequest):
 # ============================================================
 
 @app.get("/auth/me")
-def current_user(user=Depends(get_current_user)):
+def auth_me(
+    authorization: Optional[str] = Header(default=None)
+):
 
-    username = user["username"]
-
-    account = USERS.get(username)
-
-    if not account:
-        raise HTTPException(
-            status_code=401,
-            detail="User not found.",
-        )
+    user = get_current_user(
+        authorization
+    )
 
     return {
-        "username": username,
-        "name": account["name"],
-        "role": account["role"],
+        "user": user
     }
 
 
 # ============================================================
-# BONUS RATE INFORMATION
+# DEPARTMENTS
+# ============================================================
+
+@app.get("/departments")
+def get_departments(
+    authorization: Optional[str] = Header(default=None)
+):
+
+    get_current_user(
+        authorization
+    )
+
+    return {
+        "departments": DEPARTMENTS
+    }
+
+
+# ============================================================
+# BONUS RATES
 # ============================================================
 
 @app.get("/bonus-rates")
 def get_bonus_rates(
-    user=Depends(get_current_user),
+    authorization: Optional[str] = Header(default=None)
 ):
+
+    get_current_user(
+        authorization
+    )
+
     return {
         "rates": BONUS_RATES
     }
 
 
 # ============================================================
-# TIME CALCULATION
-# ============================================================
-
-def calculate_completed_hours(
-    on_duty: str,
-    off_duty: str,
-) -> int:
-    """
-    Calculates completed hours only.
-
-    Example:
-
-    18:24 -> 19:04
-    = 40 minutes
-    = 0 paid hours
-
-    18:24 -> 20:24
-    = 2 hours
-    = 2 paid hours
-    """
-
-    try:
-        start = datetime.strptime(
-            on_duty.strip(),
-            "%H:%M"
-        )
-
-        end = datetime.strptime(
-            off_duty.strip(),
-            "%H:%M"
-        )
-
-        # Handles overnight shifts.
-        if end < start:
-            end += timedelta(days=1)
-
-        difference = end - start
-
-        total_seconds = int(
-            difference.total_seconds()
-        )
-
-        completed_hours = total_seconds // 3600
-
-        return completed_hours
-
-    except ValueError:
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Invalid time format: "
-                f"{on_duty} - {off_duty}. "
-                f"Use HH:MM format."
-            ),
-        )
-
-
-# ============================================================
-# LOBBY RATE
-# ============================================================
-
-def get_lobby_rate(
-    lobby: str,
-    department: str,
-) -> int:
-
-    lobby_key = lobby.lower().strip()
-    department_key = department.lower().strip()
-
-    # --------------------------------------------------------
-    # HIGH COMMAND
-    # --------------------------------------------------------
-
-    if department_key in [
-        "high command",
-        "highcommand",
-        "hc",
-    ]:
-        return BONUS_RATES["high_command_hour"]
-
-
-    # --------------------------------------------------------
-    # MEDICAL DEPARTMENT
-    # --------------------------------------------------------
-
-    if department_key in [
-        "medical",
-        "medical department",
-        "ems",
-    ]:
-
-        rates = {
-            "ph1": BONUS_RATES["day_ph1"],
-            "ph2": BONUS_RATES["day_ph2"],
-
-            "day ph1": BONUS_RATES["day_ph1"],
-            "day ph2": BONUS_RATES["day_ph2"],
-
-            "late ph1": BONUS_RATES["late_ph1"],
-            "late ph2": BONUS_RATES["late_ph2"],
-
-            "night ph1": BONUS_RATES["night_ph1"],
-            "night ph2": BONUS_RATES["night_ph2"],
-
-            "day on calls": BONUS_RATES["day_on_calls"],
-            "late on calls": BONUS_RATES["late_on_calls"],
-            "night on calls": BONUS_RATES["night_on_calls"],
-
-            "standby": BONUS_RATES["standby"],
-        }
-
-        return rates.get(
-            lobby_key,
-            BONUS_RATES["high_command_hour"],
-        )
-
-
-    # --------------------------------------------------------
-    # AMBULANCE
-    # --------------------------------------------------------
-
-    if department_key in [
-        "ambulance",
-        "ambulance department",
-        "ambulance officer",
-    ]:
-
-        rates = {
-            "day": BONUS_RATES["ambulance_day"],
-            "day ambulance": BONUS_RATES["ambulance_day"],
-
-            "late": BONUS_RATES["ambulance_late"],
-            "late ambulance": BONUS_RATES["ambulance_late"],
-
-            "night": BONUS_RATES["ambulance_night"],
-            "night ambulance": BONUS_RATES["ambulance_night"],
-
-            "standby": BONUS_RATES["standby"],
-        }
-
-        return rates.get(
-            lobby_key,
-            BONUS_RATES["ambulance_day"],
-        )
-
-
-    # --------------------------------------------------------
-    # DEFAULT
-    # --------------------------------------------------------
-
-    return BONUS_RATES["high_command_hour"]
-
-
-# ============================================================
-# LOBBY CALCULATION
-# ============================================================
-
-def calculate_lobbies(
-    lobbies: List[LobbyLog],
-    department: str,
-):
-
-    calculated_lobbies = []
-
-    total_bonus = 0
-
-    for lobby in lobbies:
-
-        hours = calculate_completed_hours(
-            lobby.on_duty,
-            lobby.off_duty,
-        )
-
-        rate = get_lobby_rate(
-            lobby.lobby,
-            department,
-        )
-
-        bonus = hours * rate
-
-        total_bonus += bonus
-
-        calculated_lobbies.append({
-            "lobby": lobby.lobby,
-            "on_duty": lobby.on_duty,
-            "off_duty": lobby.off_duty,
-            "date": lobby.date,
-            "completed_hours": hours,
-            "rate_per_hour": rate,
-            "bonus": bonus,
-        })
-
-    return calculated_lobbies, total_bonus
-
-
-# ============================================================
-# ACTIVITY CALCULATION
-# ============================================================
-
-def calculate_activities(
-    activities: ActivityCounts,
-):
-
-    items = []
-
-    total = 0
-
-
-    # --------------------------------------------------------
-    # CAPTCHA
-    # --------------------------------------------------------
-
-    if activities.captcha > 0:
-
-        amount = (
-            activities.captcha
-            * BONUS_RATES["captcha"]
-        )
-
-        items.append({
-            "type": "Captcha",
-            "count": activities.captcha,
-            "rate": BONUS_RATES["captcha"],
-            "amount": amount,
-        })
-
-        total += amount
-
-
-    # --------------------------------------------------------
-    # DELIVERY
-    # --------------------------------------------------------
-
-    if activities.deliveries > 0:
-
-        # $5,000 bonus
-        delivery_bonus = (
-            activities.deliveries
-            * BONUS_RATES["delivery_bonus"]
-        )
-
-        # $5,000 per delivery
-        delivery_paycheck = (
-            activities.deliveries
-            * BONUS_RATES["delivery_paycheck"]
-        )
-
-        amount = (
-            delivery_bonus
-            + delivery_paycheck
-        )
-
-        items.append({
-            "type": "Delivery",
-            "count": activities.deliveries,
-            "rate": (
-                BONUS_RATES["delivery_bonus"]
-                + BONUS_RATES["delivery_paycheck"]
-            ),
-            "amount": amount,
-        })
-
-        total += amount
-
-
-    # --------------------------------------------------------
-    # FTO
-    # --------------------------------------------------------
-
-    training_items = [
-        (
-            "Day 1 Training",
-            activities.day_1_training,
-            BONUS_RATES["day_1_training"],
-        ),
-        (
-            "Day 2 Training",
-            activities.day_2_training,
-            BONUS_RATES["day_2_training"],
-        ),
-        (
-            "Labtech Training",
-            activities.labtech_training,
-            BONUS_RATES["labtech_training"],
-        ),
-        (
-            "Refresher Training",
-            activities.refresher_training,
-            BONUS_RATES["refresher_training"],
-        ),
-    ]
-
-    for name, count, rate in training_items:
-
-        if count > 0:
-
-            amount = count * rate
-
-            items.append({
-                "type": name,
-                "count": count,
-                "rate": rate,
-                "amount": amount,
-            })
-
-            total += amount
-
-
-    # --------------------------------------------------------
-    # RESCUE OFFICER
-    # --------------------------------------------------------
-
-    event_items = [
-        (
-            "Unscripted Event",
-            activities.unscripted_events,
-            BONUS_RATES["unscripted_event"],
-        ),
-        (
-            "Scripted Event",
-            activities.scripted_events,
-            BONUS_RATES["scripted_event"],
-        ),
-    ]
-
-    for name, count, rate in event_items:
-
-        if count > 0:
-
-            amount = count * rate
-
-            items.append({
-                "type": name,
-                "count": count,
-                "rate": rate,
-                "amount": amount,
-            })
-
-            total += amount
-
-
-    return items, total
-
-
-# ============================================================
-# CALCULATE ONE EMPLOYEE
-# ============================================================
-
-def calculate_employee(
-    employee: EmployeeBonusRequest,
-):
-
-    lobby_items, lobby_total = calculate_lobbies(
-        employee.lobbies,
-        employee.department,
-    )
-
-    activity_items, activity_total = calculate_activities(
-        employee.activities,
-    )
-
-    total = lobby_total + activity_total
-
-    return {
-        "name": employee.name,
-        "employee_id": employee.employee_id,
-        "department": employee.department,
-
-        "lobbies": lobby_items,
-        "activities": activity_items,
-
-        "lobby_total": lobby_total,
-        "activity_total": activity_total,
-
-        "total": total,
-    }
-
-
-# ============================================================
-# CALCULATE ALL BONUSES
+# CALCULATE SINGLE EMPLOYEE
 # ============================================================
 
 @app.post("/calculate")
 def calculate_bonus(
-    data: BonusCalculationRequest,
-    user=Depends(get_current_user),
+    request: EmployeeBonusRequest,
+    authorization: Optional[str] = Header(default=None)
 ):
 
-    employees = []
+    get_current_user(
+        authorization
+    )
 
-    department_totals: Dict[str, int] = {}
-
-    grand_total = 0
-
-    for employee in data.employees:
-
-        result = calculate_employee(employee)
-
-        employees.append(result)
-
-        department = employee.department
-
-        if department not in department_totals:
-            department_totals[department] = 0
-
-        department_totals[department] += result["total"]
-
-        grand_total += result["total"]
-
-
-    return {
-        "employees": employees,
-        "department_totals": department_totals,
-        "grand_total": grand_total,
-    }
-
-
-# ============================================================
-# MONEY FORMAT
-# ============================================================
-
-def money(amount: int) -> str:
-    return f"${amount:,.0f}"
-
-
-# ============================================================
-# DISCORD REPORT GENERATOR
-# ============================================================
-
-def generate_employee_line(
-    employee: Dict[str, Any]
-) -> str:
-
-    parts = []
-
-
-    # --------------------------------------------------------
-    # LOBBIES
-    # --------------------------------------------------------
-
-    for lobby in employee["lobbies"]:
-
-        hours = lobby["completed_hours"]
-
-        if hours <= 0:
-            continue
-
-        lobby_name = lobby["lobby"]
-
-        amount = lobby["bonus"]
-
-        parts.append(
-            f"{hours}Hr {lobby_name} = {money(amount)}"
-        )
-
-
-    # --------------------------------------------------------
-    # ACTIVITIES
-    # --------------------------------------------------------
-
-    for activity in employee["activities"]:
-
-        count = activity["count"]
-
-        amount = activity["amount"]
-
-        activity_type = activity["type"]
-
-        parts.append(
-            f"{count}x {activity_type} = {money(amount)}"
-        )
-
-
-    if not parts:
-        parts.append("No payable bonuses")
-
-
-    details = " , ".join(parts)
-
-    return (
-        f"{employee['name']} | "
-        f"{employee['employee_id']} "
-        f"({details}) "
-        f"Total = {money(employee['total'])}"
+    return calculate_employee(
+        request
     )
 
 
 # ============================================================
-# REPORT
+# CALCULATE MULTIPLE EMPLOYEES
 # ============================================================
 
 @app.post("/calculate/report")
 def calculate_report(
-    data: BonusCalculationRequest,
-    user=Depends(get_current_user),
+    request: BonusCalculationRequest,
+    authorization: Optional[str] = Header(default=None)
 ):
+
+    get_current_user(
+        authorization
+    )
 
     results = []
 
-    department_groups: Dict[
-        str,
-        List[Dict[str, Any]]
-    ] = {}
+    department_totals = {}
 
-    department_totals: Dict[str, int] = {}
+    grand_total = 0
 
+    for employee in request.employees:
 
-    # --------------------------------------------------------
-    # CALCULATE
-    # --------------------------------------------------------
-
-    for employee in data.employees:
-
-        result = calculate_employee(employee)
+        result = calculate_employee(
+            employee
+        )
 
         results.append(result)
 
         department = employee.department
 
-        if department not in department_groups:
-            department_groups[department] = []
-
-        department_groups[department].append(
-            result
+        department_totals.setdefault(
+            department,
+            0
         )
 
-        department_totals[department] = (
-            department_totals.get(
-                department,
-                0
-            )
-            + result["total"]
+        department_totals[department] += (
+            result["total"]
         )
 
-
-    # --------------------------------------------------------
-    # BUILD REPORT
-    # --------------------------------------------------------
-
-    lines = []
-
-    grand_total = sum(
-        department_totals.values()
-    )
-
-
-    for department, employees in department_groups.items():
-
-        lines.append(
-            "==================="
-        )
-
-        lines.append(
-            department
-        )
-
-        lines.append(
-            "==================="
-        )
-
-        for employee in employees:
-
-            lines.append(
-                generate_employee_line(
-                    employee
-                )
-            )
-
-            lines.append("")
-
-
-        lines.append(
-            f"Department Total: "
-            f"{money(department_totals[department])}"
-        )
-
-        lines.append(
-            "==================="
-        )
-
-
-    lines.append(
-        "===================================="
-    )
-
-    lines.append(
-        f"All Total = {money(grand_total)}"
-    )
-
-    lines.append(
-        "===================================="
-    )
-
-    lines.append(
-        "Bonus missing? DM me with logs or bodycam proof."
-    )
-
-    lines.append(
-        "Partial shifts are not paid; hourly bonuses require a completed hour."
-    )
-
-    report = "\n".join(lines)
+        grand_total += result["total"]
 
     return {
-        "report": report,
+        "employees": results,
         "department_totals": department_totals,
         "grand_total": grand_total,
-        "employees": results,
+        "formatted_grand_total": money(
+            grand_total
+        ),
     }
 
 
 # ============================================================
-# EXAMPLE / TEST CALCULATION
+# EXAMPLE
 # ============================================================
 
 @app.get("/example")
-def example(
-    user=Depends(get_current_user),
-):
+def example():
 
-    example_data = BonusCalculationRequest(
-        employees=[
-            EmployeeBonusRequest(
-                name="Kevin Sims",
-                employee_id="163100",
-                department="Human Resources",
-                activities=ActivityCounts(
-                    day_1_training=1
-                ),
-            ),
-
-            EmployeeBonusRequest(
-                name="Luna Valente",
-                employee_id="463928",
-                department="Human Resources",
-                activities=ActivityCounts(
-                    day_1_training=1
-                ),
-            ),
-
-            EmployeeBonusRequest(
-                name="Kikita Sokolov",
-                employee_id="558052",
-                department="Rescue Officer",
-                lobbies=[
-                    LobbyLog(
-                        lobby="Day PH2",
-                        on_duty="10:00",
-                        off_duty="11:00",
-                    ),
-                ],
-                activities=ActivityCounts(
-                    unscripted_events=1
-                ),
-            ),
-        ]
+    example_employee = EmployeeBonusRequest(
+        name="Kevin Sims",
+        employee_id="163100",
+        department="Human Resources",
+        activities=ActivityCounts(
+            day_1_training=1
+        ),
     )
 
-    return calculate_report(
-        example_data,
-        user,
+    return calculate_employee(
+        example_employee
     )
 
 
 # ============================================================
-# ERROR HANDLER
-# ============================================================
-
-@app.get("/bonus-rates/public")
-def public_bonus_rates():
-    """
-    Public endpoint for displaying the current bonus structure
-    before login if required by the frontend.
-    """
-
-    return {
-        "rates": BONUS_RATES
-    }
-
-
-# ============================================================
-# RUN DIRECTLY
+# RUN LOCALLY
 # ============================================================
 
 if __name__ == "__main__":
